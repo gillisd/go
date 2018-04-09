@@ -7,6 +7,7 @@ package http
 import (
 	"io"
 	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"slices"
 	"strings"
@@ -21,6 +22,20 @@ import (
 // The keys should be in canonical form, as returned by
 // [CanonicalHeaderKey].
 type Header map[string][]string
+
+// HeaderOrderKey is a magic key for ResponseWriter.Header map keys
+// that, if present, defines a header order that will be used to
+// write the headers onto wire. The order of the list defined how the headers
+// will be sorted. A defined key goes before an undefined key.
+//
+// This is the only way to specify some order, because maps don't
+// have a a stable iteration order. If no order is given, headers will
+// be sorted lexicographically.
+//
+// According to RFC-2616 it is good practice to send general-header fields
+// first, followed by request-header or response-header fields and ending
+// with entity-header fields.
+const HeaderOrderKey = "Header-Order:"
 
 // Add adds the key, value pair to the header.
 // It appends to any existing values associated with key.
@@ -151,9 +166,32 @@ type keyValues struct {
 	values []string
 }
 
-// headerSorter contains a slice of keyValues sorted by keyValues.key.
+// headerSorter contains a slice of keyValues sorted by the given
+// order, if not nil, or by keyValues.key otherwise.
 type headerSorter struct {
-	kvs []keyValues
+	kvs   []keyValues
+	order map[string]int
+}
+
+// compare orders a before b if a's key appears earlier in s.order.
+// Keys listed in s.order go before unlisted keys; unlisted keys,
+// or all keys when s.order is nil, are sorted lexicographically.
+func (s *headerSorter) compare(a, b keyValues) int {
+	if s.order != nil {
+		al, _ := ascii.ToLower(a.key)
+		bl, _ := ascii.ToLower(b.key)
+		ia, aok := s.order[al]
+		ib, bok := s.order[bl]
+		switch {
+		case aok && bok:
+			return ia - ib
+		case aok:
+			return -1
+		case bok:
+			return 1
+		}
+	}
+	return strings.Compare(a.key, b.key)
 }
 
 var headerSorterPool = sync.Pool{
@@ -179,6 +217,26 @@ func (h Header) sortedKeyValues(exclude map[string]bool) (kvs []keyValues, hs *h
 	return kvs, hs
 }
 
+// sortedKeyValuesBy is like sortedKeyValues, but sorts by order
+// (see headerSorter.compare) and always omits HeaderOrderKey.
+func (h Header) sortedKeyValuesBy(order map[string]int, exclude map[string]bool) (kvs []keyValues, hs *headerSorter) {
+	hs = headerSorterPool.Get().(*headerSorter)
+	if cap(hs.kvs) < len(h) {
+		hs.kvs = make([]keyValues, 0, len(h))
+	}
+	kvs = hs.kvs[:0]
+	for k, vv := range h {
+		if k != HeaderOrderKey && !exclude[k] {
+			kvs = append(kvs, keyValues{k, vv})
+		}
+	}
+	hs.kvs = kvs
+	hs.order = order
+	slices.SortFunc(hs.kvs, hs.compare)
+	hs.order = nil
+	return kvs, hs
+}
+
 // WriteSubset writes a header in wire format.
 // If exclude is not nil, keys where exclude[key] == true are not written.
 // Keys are not canonicalized before checking the exclude map.
@@ -191,7 +249,18 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 	if !ok {
 		ws = stringWriter{w}
 	}
-	kvs, sorter := h.sortedKeyValues(exclude)
+	var kvs []keyValues
+	var sorter *headerSorter
+	// Check if the HeaderOrder is defined.
+	if headerOrder, ok := h[HeaderOrderKey]; ok {
+		order := make(map[string]int, len(headerOrder))
+		for i, v := range headerOrder {
+			order[v] = i
+		}
+		kvs, sorter = h.sortedKeyValuesBy(order, exclude)
+	} else {
+		kvs, sorter = h.sortedKeyValues(exclude)
+	}
 	var formattedVals []string
 	for _, kv := range kvs {
 		if !httpguts.ValidHeaderFieldName(kv.key) {

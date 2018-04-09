@@ -562,6 +562,12 @@ func validateHeadersWithProtocol(hdrs Header) string {
 
 func validateHeaderFields(hdrs Header, allowProtocol bool) string {
 	for k, vv := range hdrs {
+		// Allow the HeaderOrderKey magic string in request headers
+		// (allowProtocol is only set for those); it is consumed when
+		// the headers are written and never sent on the wire.
+		if allowProtocol && k == HeaderOrderKey {
+			continue
+		}
 		if !httpguts.ValidHeaderFieldName(k) && !(allowProtocol && k == ":protocol") {
 			return fmt.Sprintf("field name %q", k)
 		}

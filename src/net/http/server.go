@@ -502,6 +502,9 @@ type response struct {
 	closeNotifyCh chan bool
 	// closeNotifyTriggered tracks prior closeNotify calls.
 	closeNotifyTriggered bool
+
+	// Option for opt-in sorting headers by defined order in a special header.
+	enableOrderHeaders bool
 }
 
 func (c *response) SetReadDeadline(deadline time.Time) error {
@@ -1282,6 +1285,10 @@ func relevantCaller() runtime.Frame {
 }
 
 func (w *response) WriteHeader(code int) {
+	// Check if the order headers option has been disabled.
+	if _, ok := w.handlerHeader[HeaderOrderKey]; ok && !w.enableOrderHeaders {
+		delete(w.handlerHeader, HeaderOrderKey)
+	}
 	if w.conn.hijacked() {
 		caller := relevantCaller()
 		w.conn.server.logf("http: response.WriteHeader on hijacked connection from %s (%s:%d)", caller.Function, path.Base(caller.File), caller.Line)
@@ -4494,4 +4501,14 @@ func MaxBytesHandler(h Handler, n int64) Handler {
 		r2.Body = MaxBytesReader(w, r.Body, n)
 		h.ServeHTTP(w, &r2)
 	})
+}
+
+// EnableHeaderOrder set the option to enable the ResponseWriter to use the
+// HeaderOrderKey in it's headers, for sorting them.
+func EnableHeaderOrder(writer ResponseWriter) ResponseWriter {
+	if res, ok := writer.(*response); ok {
+		res.enableOrderHeaders = true
+		return res
+	}
+	return writer
 }
