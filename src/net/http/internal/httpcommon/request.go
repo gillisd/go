@@ -117,16 +117,26 @@ func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(n
 	// Check for any invalid headers+trailers and return an error before we
 	// potentially pollute our hpack state. (We want to be able to
 	// continue to reuse the hpack encoder for future requests)
-	if err := validateHeaders(req.Header); err != "" {
+	if err := validateHeaders(req.Header, true); err != "" {
 		return res, fmt.Errorf("invalid HTTP header %s", err)
 	}
-	if err := validateHeaders(req.Trailer); err != "" {
+	if err := validateHeaders(req.Trailer, false); err != "" {
 		return res, fmt.Errorf("invalid HTTP trailer %s", err)
 	}
 
 	trailers, err := commaSeparatedTrailers(req.Trailer)
 	if err != nil {
 		return res, err
+	}
+
+	// Header keys in the order they are sent: as given by
+	// HeaderOrderKey if set, otherwise in map order.
+	headerKeys, ordered := OrderedKeys(req.Header)
+	if !ordered {
+		headerKeys = make([]string, 0, len(req.Header))
+		for k := range req.Header {
+			headerKeys = append(headerKeys, k)
+		}
 	}
 
 	enumerateHeaders := func(f func(name, value string)) {
@@ -153,7 +163,8 @@ func EncodeHeaders(ctx context.Context, param EncodeHeadersParam, headerf func(n
 		}
 
 		var didUA bool
-		for k, vv := range req.Header {
+		for _, k := range headerKeys {
+			vv := req.Header[k]
 			if asciiEqualFold(k, "host") || asciiEqualFold(k, "content-length") {
 				// Host is :authority, already sent.
 				// Content-Length is automatic, set below.
@@ -342,8 +353,12 @@ func validPseudoPath(v string) bool {
 	return (len(v) > 0 && v[0] == '/') || v == "*"
 }
 
-func validateHeaders(hdrs map[string][]string) string {
+func validateHeaders(hdrs map[string][]string, allowOrderKey bool) string {
 	for k, vv := range hdrs {
+		if allowOrderKey && k == HeaderOrderKey {
+			// Consumed by OrderedKeys; never sent on the wire.
+			continue
+		}
 		if !httpguts.ValidHeaderFieldName(k) && k != ":protocol" {
 			return fmt.Sprintf("name %q", k)
 		}

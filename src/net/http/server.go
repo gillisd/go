@@ -4506,9 +4506,11 @@ func MaxBytesHandler(h Handler, n int64) Handler {
 // EnableHeaderOrder set the option to enable the ResponseWriter to use the
 // HeaderOrderKey in it's headers, for sorting them.
 func EnableHeaderOrder(writer ResponseWriter) ResponseWriter {
-	if res, ok := writer.(*response); ok {
-		res.enableOrderHeaders = true
-		return res
+	switch w := writer.(type) {
+	case *response:
+		w.enableOrderHeaders = true
+	case interface{ EnableHeaderOrder() }: // HTTP/2
+		w.EnableHeaderOrder()
 	}
 	return writer
 }

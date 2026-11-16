@@ -342,6 +342,9 @@ func (wu writeWindowUpdate) writeFrame(ctx writeContext) error {
 // is encoded only if k is in keys.
 func encodeHeaders(enc *hpack.Encoder, h Header, keys []string) {
 	if keys == nil {
+		keys, _ = httpcommon.OrderedKeys(h)
+	}
+	if keys == nil {
 		sorter := sorterPool.Get().(*sorter)
 		// Using defer here, since the returned keys from the
 		// sorter.Keys method is only valid until the sorter

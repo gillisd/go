@@ -7,6 +7,7 @@ package http
 import (
 	"bytes"
 	"internal/race"
+	"net/http/internal/httpcommon"
 	"reflect"
 	"runtime"
 	"strings"
@@ -116,6 +117,12 @@ var headerWriteTests = []struct {
 		nil,
 		"e: 1\r\na: 2\r\nb: 3\r\nd: 4\r\nc: 5\r\n",
 	},
+}
+
+func TestHeaderOrderKeyMatchesHTTPCommon(t *testing.T) {
+	if HeaderOrderKey != httpcommon.HeaderOrderKey {
+		t.Fatalf("HeaderOrderKey = %q, httpcommon.HeaderOrderKey = %q", HeaderOrderKey, httpcommon.HeaderOrderKey)
+	}
 }
 
 func TestHeaderWrite(t *testing.T) {

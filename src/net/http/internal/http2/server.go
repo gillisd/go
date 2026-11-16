@@ -2790,6 +2790,10 @@ type responseWriterState struct {
 	sentHeader    bool     // have we sent the header frame?
 	handlerDone   bool     // handler has finished
 
+	// enableOrderHeaders reports whether HeaderOrderKey in handlerHeader
+	// is honored (see responseWriter.EnableHeaderOrder).
+	enableOrderHeaders bool
+
 	sentContentLen int64 // non-zero if handler set a Content-Length header
 	wroteBytes     int64
 
@@ -3109,6 +3113,14 @@ func (w *responseWriter) CloseNotify() <-chan bool {
 	return ch
 }
 
+// EnableHeaderOrder makes the response honor the HeaderOrderKey entry
+// in its header map when writing headers.
+func (w *responseWriter) EnableHeaderOrder() {
+	if rws := w.rws; rws != nil {
+		rws.enableOrderHeaders = true
+	}
+}
+
 func (w *responseWriter) Header() Header {
 	rws := w.rws
 	if rws == nil {
@@ -3148,6 +3160,11 @@ func (w *responseWriter) WriteHeader(code int) {
 func (rws *responseWriterState) writeHeader(code int) {
 	if rws.wroteHeader {
 		return
+	}
+
+	// Drop HeaderOrderKey unless ordering was enabled.
+	if _, ok := rws.handlerHeader[httpcommon.HeaderOrderKey]; ok && !rws.enableOrderHeaders {
+		delete(rws.handlerHeader, httpcommon.HeaderOrderKey)
 	}
 
 	checkWriteHeaderCode(code)
